@@ -1,5 +1,101 @@
 import torch
 import torch.nn.functional as F
+import torch.autograd as autograd
+
+
+
+def general_robustness_loss(x, aggregates, concepts, relevances):
+    """Computes Robustness Loss for general image data.
+
+    Parameters
+    ----------
+    x            : torch.tensor
+                 Input image as (batch_size x C x H x W)
+    aggregates   : torch.tensor
+                 Aggregates from SENN as (batch_size x num_classes x concept_dim)
+    concepts     : torch.tensor
+                 Concepts from Conceptizer as (batch_size x num_concepts x concept_dim)
+    relevances   : torch.tensor
+                 Relevances from Parameterizer as (batch_size x num_concepts x num_classes)
+
+    Returns
+    -------
+    robustness_loss_val  : torch.tensor
+        Robustness loss as frobenius norm of (batch_size x num_classes x num_features)
+    """
+    # concept_dim is always 1 for this project by design, so squeeze
+    concepts = concepts.squeeze(-1) # -> (batch_size x num_concepts)
+    aggregates = aggregates.squeeze(-1) # -> (batch_size x num_classes)
+
+    batch_size = x.size(0)
+    num_concepts = concepts.size(1)
+    num_classes = aggregates.size(1)
+
+    # Make sure x requires gradients for Jacobian calculation
+    if not x.requires_grad:
+        # Clone x and set requires_grad to True, preserving the original data
+        x = x.clone().requires_grad_(True)
+    
+    # Calculate num_features dynamically based on the input x's shape
+    # This will be C * H * W
+    num_features = x.view(batch_size, -1).size(1)
+
+
+    # Jacobian of aggregates wrt x (J_yx)
+    jacobians_yx = []
+    for i in range(num_classes):
+        # Create a tensor of zeros with the same shape as aggregates, then set a 1 for the current class
+        grad_output_for_class = torch.zeros_like(aggregates, device=x.device)
+        grad_output_for_class[:, i] = 1.
+
+        # Compute gradients of aggregates (y_pred for each class) with respect to x
+        # This will give a tensor of shape (batch_size x C x H x W)
+        j_yx_i = autograd.grad(outputs=aggregates, inputs=x,
+                               grad_outputs=grad_output_for_class,
+                               create_graph=True, # Important for higher-order derivatives if needed later
+                               only_inputs=True)[0]
+        
+        # Flatten the spatial dimensions to (batch_size x num_features x 1)
+        # num_features = C*H*W
+        jacobians_yx.append(j_yx_i.view(batch_size, num_features, 1))
+
+    # Concatenate for all classes: (batch_size x num_features x num_classes)
+    J_yx = torch.cat(jacobians_yx, dim=2)
+
+
+    # Jacobian of concepts wrt x (J_hx)
+    jacobians_hx = []
+    for i in range(num_concepts):
+        # Create a tensor of zeros with the same shape as concepts, then set a 1 for the current concept
+        grad_output_for_concept = torch.zeros_like(concepts, device=x.device)
+        grad_output_for_concept[:, i] = 1.
+
+        # Compute gradients of concepts (h) with respect to x
+        # This will also give a tensor of shape (batch_size x C x H x W)
+        j_hx_i = autograd.grad(outputs=concepts, inputs=x,
+                               grad_outputs=grad_output_for_concept,
+                               create_graph=True,
+                               only_inputs=True)[0]
+        
+        # Flatten the spatial dimensions to (batch_size x num_features x 1)
+        jacobians_hx.append(j_hx_i.view(batch_size, num_features, 1))
+
+    # Concatenate for all concepts: (batch_size x num_features x num_concepts)
+    J_hx = torch.cat(jacobians_hx, dim=2)
+
+
+    # Calculate the core robustness difference
+    # (batch_size x num_features x num_concepts) @ (batch_size x num_concepts x num_classes)
+    # -> (batch_size x num_features x num_classes)
+    term_bmm = torch.bmm(J_hx, relevances)
+
+    # The difference: (batch_size x num_features x num_classes)
+    robustness_diff = J_yx - term_bmm
+
+    # Compute Frobenius norm
+    robustness_loss_val = robustness_diff.norm(p='fro')
+
+    return robustness_loss_val
 
 
 def compas_robustness_loss(x, aggregates, concepts, relevances):

@@ -248,7 +248,6 @@ class VaeDecoder(nn.Module):
         x_reconstruct = torch.sigmoid(self.FC(x))
         return x_reconstruct
 
-
 class ConvConceptizer(Conceptizer):
     def __init__(self, image_size, num_concepts, concept_dim, image_channels=1, encoder_channels=(10,),
                  decoder_channels=(16, 8), kernel_size_conv=5, kernel_size_upsample=(5, 5, 2),
@@ -286,59 +285,83 @@ class ConvConceptizer(Conceptizer):
         padding_upsample : int, tuple[int]
             the padding to be used by the upsampling layers
         """
+
+
         super(ConvConceptizer, self).__init__()
         self.num_concepts = num_concepts
-        self.filter = filter
-        self.dout = image_size
+        # self.filter = filter # 'filter' was an undefined variable, removed or define it if needed for a specific purpose
+        self.concept_dim = concept_dim # Store concept_dim for later use
+
+        current_dout = image_size # Track the spatial dimension dynamically
 
         # Encoder params
-        encoder_channels = (image_channels,) + encoder_channels
-        kernel_size_conv = handle_integer_input(kernel_size_conv, len(encoder_channels))
-        stride_conv = handle_integer_input(stride_conv, len(encoder_channels))
-        stride_pool = handle_integer_input(stride_pool, len(encoder_channels))
-        padding_conv = handle_integer_input(padding_conv, len(encoder_channels))
-        encoder_channels += (num_concepts,)
+        # (image_channels,) + encoder_channels gives (3, 10, 20)
+        # encoder_channels += (num_concepts,) makes it (3, 10, 20, 5) which is what you have for Conv2d outputs
+        _encoder_channels_list = (image_channels,) + tuple(encoder_channels) + (num_concepts,)
 
-        # Decoder params
-        decoder_channels = (num_concepts,) + decoder_channels
-        kernel_size_upsample = handle_integer_input(kernel_size_upsample, len(decoder_channels))
-        stride_upsample = handle_integer_input(stride_upsample, len(decoder_channels))
-        padding_upsample = handle_integer_input(padding_upsample, len(decoder_channels))
-        decoder_channels += (image_channels,)
+        _kernel_size_conv = handle_integer_input(kernel_size_conv, len(_encoder_channels_list) - 1)
+        _stride_conv = handle_integer_input(stride_conv, len(_encoder_channels_list) - 1)
+        _stride_pool = handle_integer_input(stride_pool, len(_encoder_channels_list) - 1)
+        _padding_conv = handle_integer_input(padding_conv, len(_encoder_channels_list) - 1)
+
 
         # Encoder implementation
         self.encoder = nn.ModuleList()
-        for i in range(len(encoder_channels) - 1):
-            self.encoder.append(self.conv_block(in_channels=encoder_channels[i],
-                                                out_channels=encoder_channels[i + 1],
-                                                kernel_size=kernel_size_conv[i],
-                                                stride_conv=stride_conv[i],
-                                                stride_pool=stride_pool[i],
-                                                padding=padding_conv[i]))
-            self.dout = (self.dout - kernel_size_conv[i] + 2 * padding_conv[i] + stride_conv[i] * stride_pool[i]) // (
-                    stride_conv[i] * stride_pool[i])
 
-        if self.filter and concept_dim == 1:
+        for i in range(len(_encoder_channels_list) - 1):
+            self.encoder.append(self.conv_block(in_channels=_encoder_channels_list[i],
+                                                out_channels=_encoder_channels_list[i + 1],
+                                                kernel_size=_kernel_size_conv[i],
+                                                stride_conv=_stride_conv[i],
+                                                stride_pool=_stride_pool[i],
+                                                padding=_padding_conv[i]))
+
+            # Manually update current_dout based on standard formulas for Conv2d then MaxPool2d
+            # Assuming MaxPool2d kernel_size is equal to stride_pool (as common, and matches your trace's effect)
+            # Output height/width after Conv2d
+            h_after_conv = (current_dout + 2 * _padding_conv[i] - _kernel_size_conv[i]) // _stride_conv[i] + 1
+            # Output height/width after MaxPool2d (using stride_pool as kernel_size for MaxPool2d as in your conv_block)
+            current_dout = (h_after_conv + 2 * 0 - _stride_pool[i]) // _stride_pool[i] + 1 # MaxPool2d padding is 0 in your conv_block
+
+        self.dout = current_dout # Final spatial dimension after all encoder conv/pool layers
+
+        # Decide on the final concept layer based on concept_dim and self.dout
+        # If concept_dim == 1 and final feature map is 1x1, use ScalarMapping
+        # Removed 'self.filter' as it was undefined and not used for logic.
+        if concept_dim == 1 and self.dout == 1: # Explicitly check for 1x1 output for ScalarMapping
             self.encoder.append(ScalarMapping((self.num_concepts, self.dout, self.dout)))
-        else:
+        else: # Flatten and then a Linear layer for higher-dimensional concepts or if dout is not 1
             self.encoder.append(Flatten())
-            self.encoder.append(nn.Linear(self.dout ** 2, concept_dim))
+            self.encoder.append(nn.Linear(self.num_concepts * self.dout * self.dout, concept_dim))
+
+        # Decoder params
+        # (num_concepts,) + decoder_channels gives (5, 20, 10)
+        # decoder_channels += (image_channels,) makes it (5, 20, 10, 3) which is what you have for ConvTranspose2d outputs
+        _decoder_channels_list = (num_concepts,) + tuple(decoder_channels) + (image_channels,)
+        _kernel_size_upsample = handle_integer_input(tuple(kernel_size_upsample), len(_decoder_channels_list) - 1)
+        _stride_upsample = handle_integer_input(tuple(stride_upsample), len(_decoder_channels_list) - 1)
+        _padding_upsample = handle_integer_input(tuple(padding_upsample), len(_decoder_channels_list) - 1)
+
 
         # Decoder implementation
+        # The unlinear layer expands each concept_dim back to dout*dout
+        # If concept_dim=1, it maps 1 -> dout*dout
+        # If concept_dim>1, it maps concept_dim -> dout*dout
         self.unlinear = nn.Linear(concept_dim, self.dout ** 2)
-        self.decoder = nn.ModuleList()
-        decoder = []
-        for i in range(len(decoder_channels) - 1):
-            decoder.append(self.upsample_block(in_channels=decoder_channels[i],
-                                               out_channels=decoder_channels[i + 1],
-                                               kernel_size=kernel_size_upsample[i],
-                                               stride_deconv=stride_upsample[i],
-                                               padding=padding_upsample[i]))
-            decoder.append(nn.ReLU(inplace=True))
-        decoder.pop()
-        decoder.append(nn.Tanh())
-        self.decoder = nn.ModuleList(decoder)
 
+        decoder_modules = []
+        for i in range(len(_decoder_channels_list) - 1):
+            decoder_modules.append(self.upsample_block(in_channels=_decoder_channels_list[i],
+                                                        out_channels=_decoder_channels_list[i + 1],
+                                                        kernel_size=_kernel_size_upsample[i],
+                                                        stride_deconv=_stride_upsample[i],
+                                                        padding=_padding_upsample[i]))
+            decoder_modules.append(nn.ReLU(inplace=True))
+
+        decoder_modules.pop() # Remove last ReLU
+        decoder_modules.append(nn.Tanh()) # Add Tanh as final activation
+        self.decoder = nn.ModuleList(decoder_modules)
+    
     def encode(self, x):
         """
         The encoder part of the autoencoder which takes an Image as an input
@@ -355,9 +378,14 @@ class ConvConceptizer(Conceptizer):
 
         """
         encoded = x
-        for module in self.encoder:
+        # print("Encoder input:", encoded.shape)
+        for i, module in enumerate(self.encoder):
             encoded = module(encoded)
+            # if isinstance(module, ScalarMapping): # Debugging ScalarMapping input
+            #     print(f"Input to ScalarMapping: {encoded.shape}")
+            # print(f"After encoder layer {i} ({module.__class__.__name__}): {encoded.shape}")
         return encoded
+
 
     def decode(self, z):
         """
@@ -376,9 +404,13 @@ class ConvConceptizer(Conceptizer):
 
         """
         reconst = self.unlinear(z)
+        # print("After linear:", reconst.shape)
         reconst = reconst.view(-1, self.num_concepts, self.dout, self.dout)
-        for module in self.decoder:
+        # print("After reshape:", reconst.shape)
+
+        for i, module in enumerate(self.decoder):
             reconst = module(reconst)
+            # print(f"After decoder layer {i} ({module.__class__.__name__}): {reconst.shape}")
         return reconst
 
     def conv_block(self, in_channels, out_channels, kernel_size, stride_conv, stride_pool, padding):
@@ -411,9 +443,8 @@ class ConvConceptizer(Conceptizer):
                       kernel_size=kernel_size,
                       stride=stride_conv,
                       padding=padding),
-            # nn.BatchNorm2d(out_channels),
-            nn.MaxPool2d(kernel_size=stride_pool,
-                         padding=padding),
+            nn.MaxPool2d(kernel_size=stride_pool, # MaxPool2d kernel_size is set to stride_pool
+                         padding=0), # padding is fixed to 0
             nn.ReLU(inplace=True)
         )
 
