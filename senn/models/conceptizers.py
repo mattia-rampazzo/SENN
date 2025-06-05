@@ -2,6 +2,10 @@ from abc import abstractmethod
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+import numpy as np
 
 
 class Conceptizer(nn.Module):
@@ -247,6 +251,90 @@ class VaeDecoder(nn.Module):
         """Forward pass of a decoder"""
         x_reconstruct = torch.sigmoid(self.FC(x))
         return x_reconstruct
+
+
+class AutoEncoder(nn.Module):
+    """
+        A general autoencoder meta-class with various penalty choices.
+
+        Takes care of regularization, etc. Children of the AutoEncoder class
+        should implement encode() and decode() functions.
+        Encode's output should be same size/dim as decode input and viceversa.
+        Ideally, AutoEncoder should not need to do any resizing (TODO).
+
+    """
+    def __init__(self):
+        super(AutoEncoder, self).__init__()
+        # self.sparsity = sparsity is not None
+        # self.l1weight = sparsity if (sparsity) else 0.1
+
+    def forward(self, x):
+        encoded = self.encode(x)
+        # if self.sparsity:
+        #     #encoded = L1Penalty.apply(encoded, self.l1weight)    # Didn't work
+        decoded = self.decode(encoded)
+        return encoded, decoded.view_as(x)
+
+
+class image_cnn_conceptizer(Conceptizer):
+    """ CNN-based conceptizer for concept basis learning.
+
+        Args:
+            din (int): input size
+            nconcept (int): number of concepts
+            cdim (int): concept dimension
+
+        Inputs:
+            x: Image (b x c x d x d)
+
+        Output:
+            - Th: Tensor of encoded concepts (b x nconcept x cdim)
+    """
+
+    def __init__(self, din, nconcept, cdim=None, nchannel =1): #, sparsity = None):
+        super(image_cnn_conceptizer, self).__init__()
+        self.din      = din        # Input dimension
+        self.nconcept = nconcept   # Number of "atoms"/concepts
+        self.cdim     = cdim       # Dimension of each concept
+        self.nchannel = nchannel
+        self.learnable = True
+        self.add_bias = False
+        self.dout     = int(np.sqrt(din)//4 - 3*(5-1)//4) # For kernel = 5 in both, and maxppol stride = 2 in both
+
+        # Encoding
+        self.conv1  = nn.Conv2d(nchannel,10, kernel_size=5)    # b, 10, din - (k -1),din - (k -1) = 256, 10, 28, 28
+        # after pool layer (functional)                        # b, 10,  (din - (k -1))/2, idem = 256, 10, 14, 14
+        self.conv2  = nn.Conv2d(10, nconcept, kernel_size=5)   # b, 10, (din - (k -1))/2 - (k-1), idem 256, 5, 10, 10
+        # after pool layer (functional)                        # b, 10,  din/4 - 3(k-1))/4, idem 256, 5, 5, 5
+        self.linear = nn.Linear(self.dout**2, self.cdim)       # b, nconcepts, cdim
+
+        # Decoding
+        self.unlinear = nn.Linear(self.cdim,self.dout**2)                # b, nconcepts, dout*2
+        self.deconv3  = nn.ConvTranspose2d(nconcept, 16, 5, stride = 2)  # b, 16, (dout-1)*2 + 5, 5
+        self.deconv2  = nn.ConvTranspose2d(16, 8, 5)                     # b, 8, (dout -1)*2 + 9
+        self.deconv1  = nn.ConvTranspose2d(8, nchannel, 2, stride=2, padding=1) # b, nchannel, din, din
+
+
+    def encode(self, x):
+        
+        p       = F.relu(F.max_pool2d(self.conv1(x), 2))
+        p       = F.relu(F.max_pool2d(self.conv2(p), 2))
+        encoded = self.linear(p.view(-1, self.nconcept, self.dout**2)) #256, 5, 25
+        return encoded
+
+    def decode(self, z):
+        q       = self.unlinear(z).view(-1, self.nconcept, self.dout, self.dout)
+        q       = F.relu(self.deconv3(q))
+        q       = F.relu(self.deconv2(q))
+        decoded = F.tanh(self.deconv1(q))
+        return decoded
+
+
+
+
+
+
+
 
 class ConvConceptizer(Conceptizer):
     def __init__(self, image_size, num_concepts, concept_dim, image_channels=1, encoder_channels=(10,),

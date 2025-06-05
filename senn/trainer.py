@@ -94,8 +94,12 @@ class SENN_Trainer:
 
         # get appropriate models from global namespace and instantiate them
         try:
-            conceptizer = eval(config.conceptizer)(**config.__dict__)
-            parameterizer = eval(config.parameterizer)(**config.__dict__)
+            #conceptizer = eval(config.conceptizer)(**config.__dict__)
+            #parameterizer = eval(config.parameterizer)(**config.__dict__)
+            #aggregator = eval(config.aggregator)(**config.__dict__)
+            # HARDCODED
+            conceptizer = image_cnn_conceptizer(din=32*32, nconcept=20, cdim=1, nchannel =3)
+            parameterizer = vgg_parametrizer(din=32*32, nconcept=20, dout=10, arch = 'vgg8', nchannel = 3, only_positive = False)
             aggregator = eval(config.aggregator)(**config.__dict__)
         except:
             print("Please make sure you specify the correct Conceptizer, Parameterizer and Aggregator classes")
