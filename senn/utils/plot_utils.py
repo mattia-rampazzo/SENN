@@ -255,7 +255,7 @@ def show_explainations(model, test_loader, dataset, num_explanations=2, save_pat
             ax3 = plt.subplot2grid(gridsize, (0, 2))
 
             # figure of example image
-            ax1.imshow(test_batch[batch_idx[i]].squeeze().cpu(), cmap='gray')
+            ax1.imshow(test_batch[batch_idx[i]].squeeze().cpu().permute(1, 2, 0), cmap='gray')
             ax1.set_axis_off()
             ax1.set_title(f'Input Prediction: {y_pred[batch_idx[i]].item()}', fontsize=18)
 

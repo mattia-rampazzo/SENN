@@ -34,10 +34,15 @@ def highest_activations(model, test_loader, num_concepts=5, num_prototypes=9, sa
 
     _, top_test_idx = torch.topk(activations, num_prototypes, 0)
 
+    top_test_idx = top_test_idx.cpu()
+
     top_examples = [test_loader.dataset.data[top_test_idx[:, concept]] for concept in range(num_concepts)]
     # flatten list and ensure correct image shape
-    top_examples = [img.unsqueeze(0) if len(img.size()) == 2 else img for sublist in top_examples for img in sublist]
-
+    top_examples = [
+      torch.tensor(img).permute(2, 0, 1).float() / 255.0
+      for sublist in top_examples
+      for img in sublist
+    ]
     plt.rcdefaults()
     fig, ax = plt.subplots()
     concept_names = ['Concept {}'.format(i + 1) for i in range(num_concepts)]
@@ -90,10 +95,15 @@ def highest_contrast(model, test_loader, num_concepts=5, num_prototypes=9, save_
 
     _, top_test_idx = torch.topk(contrast_scores, num_prototypes, 0)
 
+    top_test_idx = top_test_idx.cpu()
+
     top_examples = [test_loader.dataset.data[top_test_idx[:, concept]] for concept in range(num_concepts)]
     # flatten list and ensure correct image shape
-    top_examples = [img.unsqueeze(0) if len(img.size()) == 2 else img for sublist in top_examples for img in sublist]
-
+    top_examples = [
+      torch.tensor(img).permute(2, 0, 1).float() / 255.0
+      for sublist in top_examples
+      for img in sublist
+    ]
     plt.rcdefaults()
     fig, ax = plt.subplots()
     concept_names = ['Concept {}'.format(i + 1) for i in range(num_concepts)]
@@ -150,7 +160,7 @@ def filter_concepts(model, num_concepts=5, num_prototypes=10, save_path=None):
 
 def save_or_show(img, save_path):
     """Saves an image or displays it.
-    
+
     Parameters
     ----------
     img: torch.Tensor

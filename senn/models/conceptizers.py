@@ -273,6 +273,11 @@ class AutoEncoder(nn.Module):
         # if self.sparsity:
         #     #encoded = L1Penalty.apply(encoded, self.l1weight)    # Didn't work
         decoded = self.decode(encoded)
+
+    def forward(self, x):
+        z = self.encoder(x)
+        x_tilde = self.decoder(z)
+        return z, x_tilde.view_as(x)
         return encoded, decoded.view_as(x)
 
 
@@ -309,7 +314,7 @@ class image_cnn_conceptizer(Conceptizer):
         self.linear = nn.Linear(self.dout**2, self.cdim)       # b, nconcepts, cdim
 
         # Decoding
-        self.unlinear = nn.Linear(self.cdim,self.dout**2)                # b, nconcepts, dout*2
+        self.unlinear = nn.Linear(self.cdim, self.dout**2)                # b, nconcepts, dout*2
         self.deconv3  = nn.ConvTranspose2d(nconcept, 16, 5, stride = 2)  # b, 16, (dout-1)*2 + 5, 5
         self.deconv2  = nn.ConvTranspose2d(16, 8, 5)                     # b, 8, (dout -1)*2 + 9
         self.deconv1  = nn.ConvTranspose2d(8, nchannel, 2, stride=2, padding=1) # b, nchannel, din, din
@@ -330,6 +335,61 @@ class image_cnn_conceptizer(Conceptizer):
         return decoded
 
 
+class cifar10_conceptizer(Conceptizer):
+    """ CNN-based conceptizer for concept basis learning.
+
+        Args:
+            din (int): input size
+            nconcept (int): number of concepts
+            cdim (int): concept dimension
+
+        Inputs:
+            x: Image (b x c x d x d)
+
+        Output:
+            - Th: Tensor of encoded concepts (b x nconcept x cdim)
+    """
+
+    def __init__(self, din, nconcept, cdim=None, nchannel =1): #, sparsity = None):
+        super(image_cnn_conceptizer, self).__init__()
+        self.din      = din        # Input dimension
+        self.nconcept = nconcept   # Number of "atoms"/concepts
+        self.cdim     = cdim       # Dimension of each concept
+        self.nchannel = nchannel
+        self.dout     = int(np.sqrt(din)//4 - 3*(5-1)//4) # For kernel = 5 in both, and maxppol stride = 2 in both
+
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(self.nchannel, 10, kernel_size=5),
+            nn.MaxPool2d(kernel_size=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(10, 20, kernel_size=5),
+            nn.Dropout2d(),
+            nn.MaxPool2d(kernel_size=2),
+            nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(500, self.nconcept), # Output shape here: (batch_size, self.n_concepts)
+            # nn.Tanh(),                       # Output shape here: (batch_size, self.n_concepts)
+        )
+
+        self.unlinear = nn.Linear(self.cdim, self.dout**2)                # b, nconcepts, dout*2
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(20, 16, 5, stride = 2),
+            nn.ReLU(inplace=True),
+            nn.ConvTranspose2d(16, 8, 5),
+            nn.ReLU(inplace=True),
+            nn.ConvTranspose2d(8, self.nchannel, 2, stride=2, padding=1),
+            nn.Tanh() # strangely the only thing that changes with previous impl is the position of tanh, along with the diff output
+        )
+    
+    def encode(self, x):
+        p = self.encoder(x)
+        return p.unsqueeze(dim=2)
+
+    def decode(self, x):
+        q  = self.unlinear(x).view(-1, self.nconcept, self.dout, self.dout)
+        q = self.decoder(q)
+        return q
 
 
 
