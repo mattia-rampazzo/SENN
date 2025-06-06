@@ -1,8 +1,8 @@
 # directories that should not be included in repo.
-checkpoints/
+# checkpoints/
 data/
 random/
-results/
+# results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

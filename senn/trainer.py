@@ -98,8 +98,8 @@ class SENN_Trainer:
             #parameterizer = eval(config.parameterizer)(**config.__dict__)
             #aggregator = eval(config.aggregator)(**config.__dict__)
             # HARDCODED
-            conceptizer = image_cnn_conceptizer(din=32*32, nconcept=20, cdim=1, nchannel =3)
-            parameterizer = vgg_parametrizer(din=32*32, nconcept=20, dout=10, arch = 'vgg8', nchannel = 3, only_positive = False)
+            conceptizer = Cifar10Conceptizer(din=32*32, nconcept=5, cdim=1, nchannel =3)
+            parameterizer = Cifar10Parameterizer(din=32*32, nconcept=5, dout=10, arch = 'vgg8', nchannel = 3, only_positive = False)
             aggregator = eval(config.aggregator)(**config.__dict__)
         except:
             print("Please make sure you specify the correct Conceptizer, Parameterizer and Aggregator classes")
@@ -178,7 +178,7 @@ class SENN_Trainer:
             y_pred, (concepts, relevances), x_reconstructed = self.model(x)
 
             classification_loss = self.classification_loss(y_pred.squeeze(-1), labels)
-            robustness_loss = self.robustness_loss(x, y_pred, concepts, relevances)
+            robustness_loss = self.robustness_loss(x, y_pred.squeeze(-1), concepts.squeeze(-1), relevances)
             concept_loss = self.concept_loss(x, x_reconstructed, concepts, self.config.sparsity_reg)
 
             total_loss = classification_loss + \

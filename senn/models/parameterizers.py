@@ -161,7 +161,7 @@ def vgg19_cifar():
 
 
 
-class vgg_parametrizer(nn.Module):
+class Cifar10Parameterizer(nn.Module):
     """ Parametrizer function - VGG
 
         Args:
@@ -176,7 +176,7 @@ class vgg_parametrizer(nn.Module):
     """
 
     def __init__(self, din, nconcept, dout, arch = 'alexnet', nchannel = 1, only_positive = False):
-        super(vgg_parametrizer, self).__init__()
+        super(Cifar10Parameterizer, self).__init__()
         self.nconcept = nconcept
         self.dout = dout
         self.din  = din
