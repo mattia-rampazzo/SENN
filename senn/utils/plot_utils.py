@@ -203,7 +203,7 @@ def show_explainations(model, test_loader, dataset, num_explanations=2, save_pat
     ----------
     model : torch nn.Module
         model to visualize
-    test_loader: Dataloader object
+    test_loader: Dataloader objectkwargs
         Test set dataloader to iterate over test set.
     dataset : str
         Name of the dataset used.
